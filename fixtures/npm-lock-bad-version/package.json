@@ -1,0 +1,7 @@
+{
+  "name": "fixture-lock-bad-version",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fixture: package.json is clean; package-lock has a synthetic bad version field.",
+  "dependencies": {}
+}

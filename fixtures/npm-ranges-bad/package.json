@@ -1,0 +1,24 @@
+{
+  "name": "fixture-npm-bad-ranges",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fixture: ranges, tags, overrides — policy should report violations.",
+  "dependencies": {
+    "caret-dep": "^1.0.0",
+    "tilde-dep": "~2.0.0",
+    "range-dep": ">=1.0.0 <2.0.0",
+    "or-dep": "1.0.0 || 2.0.0",
+    "npm-alias": "npm:lodash@^4.17.21",
+    "workspace-ref": "workspace:*"
+  },
+  "devDependencies": {
+    "tag-dep": "latest",
+    "wildcard-dep": "1.x",
+    "star-dep": "*"
+  },
+  "overrides": {
+    "some-pkg": {
+      ".": "~1.2.3"
+    }
+  }
+}

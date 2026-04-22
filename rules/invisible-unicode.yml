@@ -1,0 +1,10 @@
+rules:
+  - id: detect-invisible-unicode
+    patterns:
+      - pattern-regex: '[\x{200B}\x{200C}\x{200D}\x{2060}\x{FEFF}\x{2066}-\x{2069}\x{00AD}]'
+    message: "Possible invisible/unprintable Unicode character detected (zero-width, joiner, bidi, soft-hyphen, etc.)."
+    languages: [python, javascript, java, go, ruby, php, c, cpp, ts]
+    severity: WARNING
+    metadata:
+      category: security
+      url: https://owasp.org/www-project-top-ten/

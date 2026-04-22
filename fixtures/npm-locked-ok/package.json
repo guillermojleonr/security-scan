@@ -1,0 +1,12 @@
+{
+  "name": "fixture-npm-ok",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fixture: exact versions only (policy should pass).",
+  "dependencies": {
+    "left-pad": "1.3.0"
+  },
+  "devDependencies": {
+    "typescript": "5.4.5"
+  }
+}

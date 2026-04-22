@@ -1,0 +1,9 @@
+{
+  "name": "fixture-lock-v1-bad",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fixture: lockfileVersion 1 tree with a range in dependencies.version.",
+  "dependencies": {
+    "placeholder": "1.0.0"
+  }
+}

@@ -3,5 +3,5 @@ lib
 Scripts
 Include
 pyvenv.cfg
-
+semgrep-results.json
 *pyc

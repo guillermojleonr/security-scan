@@ -1,2 +1,2 @@
 # Fixture for pip-audit branch (pinned versions only).
-requests==2.31.0
+requests==2.33.0

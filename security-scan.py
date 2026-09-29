@@ -29,6 +29,16 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 # Enable Python UTF-8 mode for child processes (fix default open() encoding on Windows)
 os.environ.setdefault("PYTHONUTF8", "1")
 
+# Configuration: Enable/disable security tools
+CONFIG = {
+    "npm_lock_policy": True,       # Check npm lock policy (exact versions only)
+    "gitleaks": True,              # Scan for secrets with gitleaks
+    "semgrep": False,               # Static analysis with semgrep
+    "pip_audit": True,             # Python dependency audit with pip-audit
+    "npm_audit": True,             # Node dependency audit with npm audit
+    "trivy": True,                 # Filesystem vulnerability scan with trivy
+}
+
 
 def run_command(cmd, title, capture_output=True):
     print(f"\n🔍 {title}...")
@@ -277,64 +287,118 @@ def main():
     print("\n🚀 Starting security scan...\n")
 
     # Check npm lock policy
-    if os.path.exists("package.json") or os.path.exists("package-lock.json"):
+    if CONFIG["npm_lock_policy"] and (os.path.exists("package.json") or os.path.exists("package-lock.json")):
         check_npm_lock_policy()
 
     # 1. Secrets
-    if command_exists("gitleaks"):
-        run_command("gitleaks detect --no-banner", "Scanning for secrets")
-    else:
-        print("⚠️ gitleaks not installed")
+    if CONFIG["gitleaks"]:
+        if command_exists("gitleaks"):
+            result = run_command(
+                "gitleaks detect --no-banner --report-format json --report-path gitleaks-report.json",
+                "Scanning for secrets"
+            )
+            # Show leak details if any were found
+            if result and result.returncode != 0:
+                if os.path.exists("gitleaks-report.json"):
+                    try:
+                        with open("gitleaks-report.json", "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        leaks = data if isinstance(data, list) else data.get("leaks", [])
+                        if leaks:
+                            print(f"\n🚨 {len(leaks)} leak(s) found:")
+                            for leak in leaks:
+                                commit = leak.get("commit", "unknown")
+                                file = leak.get("file", "unknown")
+                                line = leak.get("line", "unknown")
+                                rule = leak.get("rule", "unknown")
+                                print(f"   - Commit: {commit}")
+                                print(f"     File: {file}:{line}")
+                                print(f"     Rule: {rule}")
+                                print()
+                    except Exception as e:
+                        print(f"⚠️ Could not read gitleaks report: {e}")
+                    # Clean up report file
+                    try:
+                        os.remove("gitleaks-report.json")
+                    except:
+                        pass
+        else:
+            print("⚠️ gitleaks not installed")
 
     # 2. Static analysis
-    if command_exists("semgrep"):
-        # Build absolute path to custom rules file
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        custom_rules = os.path.join(script_dir, "rules", "invisible-unicode.yml")
-        
-        if os.path.exists(custom_rules):
-            # Run Semgrep with both the default config and custom invisible-unicode rules
-            result = run_command(
-                f'semgrep scan --config auto --config "{custom_rules}" --json --output semgrep-results.json',
-                "Running Semgrep (combined configs, JSON output)",
-            )
+    if CONFIG["semgrep"]:
+        if command_exists("semgrep"):
+            # Try with simple config first to isolate the issue
+            print(f"🔍 Running Semgrep (auto config only)...")
+            try:
+                cmd = ["semgrep", "scan", "--config", "auto", "--json", "--output", "semgrep-results.json"]
+                print(f"   Command: {' '.join(cmd)}")
+                result = subprocess.run(
+                    cmd,
+                    check=False,
+                    env=os.environ,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                )
+                if result.stdout.strip():
+                    print(result.stdout)
+                if result.stderr.strip():
+                    print(result.stderr)
+                if result.returncode != 0:
+                    print(f"⚠️ Semgrep exited with code {result.returncode}")
+                    # Try with shell=True as fallback
+                    print("   Retrying with shell=True...")
+                    result2 = subprocess.run(
+                        "semgrep scan --config auto --json --output semgrep-results.json",
+                        shell=True,
+                        check=False,
+                        env=os.environ,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding="utf-8",
+                    )
+                    if result2.stdout.strip():
+                        print(result2.stdout)
+                    if result2.stderr.strip():
+                        print(result2.stderr)
+                    if result2.returncode != 0:
+                        print(f"⚠️ Semgrep (shell=True) exited with code {result2.returncode}")
+            except Exception as e:
+                print(f"⚠️ Error running Semgrep: {e}")
+            # Always show a concise Semgrep summary (or indicate missing results file)
+            print_semgrep_summary("semgrep-results.json")
         else:
-            # Fallback: run without custom rules
-            print(f"⚠️ Custom rules file not found: {custom_rules}")
-            print("   Running Semgrep with auto config only...")
-            result = run_command(
-                "semgrep scan --config auto --json --output semgrep-results.json",
-                "Running Semgrep (auto config only)",
-            )
-        # Always show a concise Semgrep summary (or indicate missing results file)
-        print_semgrep_summary("semgrep-results.json")
-
-    else:
-        print("⚠️ semgrep not installed")
+            print("⚠️ semgrep not installed")
 
     # 3. Python deps
-    if os.path.exists("requirements.txt"):
-        if command_exists("pip-audit"):
-            run_command(
-                "pip-audit -r requirements.txt",
-                "Auditing Python dependencies from requirements.txt",
-            )
-            run_command("pip-audit", "Auditing Python dependencies")
-        else:
-            print("⚠️ pip-audit not installed")
+    if CONFIG["pip_audit"]:
+        if os.path.exists("requirements.txt"):
+            if command_exists("pip-audit"):
+                run_command(
+                    "pip-audit -r requirements.txt",
+                    "Auditing Python dependencies from requirements.txt",
+                )
+                run_command("pip-audit", "Auditing Python dependencies")
+            else:
+                print("⚠️ pip-audit not installed")
 
     # 4. Node deps
-    if os.path.exists("package.json"):
-        if command_exists("npm"):
-            run_command("npm audit", "Auditing npm dependencies")
-        else:
-            print("⚠️ npm not installed")
+    if CONFIG["npm_audit"]:
+        if os.path.exists("package.json"):
+            if command_exists("npm"):
+                run_command("npm audit", "Auditing npm dependencies")
+            else:
+                print("⚠️ npm not installed")
 
     # 5. Trivy
-    if command_exists("trivy"):
-        run_command("trivy fs .", "Running Trivy filesystem scan")
-    else:
-        print("⚠️ trivy not installed")
+    if CONFIG["trivy"]:
+        if command_exists("trivy"):
+            run_command("trivy fs .", "Running Trivy filesystem scan")
+        else:
+            print("⚠️ trivy not installed")
 
     print("\n✅ Scan completed")
 

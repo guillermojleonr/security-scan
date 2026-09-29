@@ -1,7 +1,9 @@
 # Created by venv; see https://docs.python.org/3/library/venv.html
-lib
+*.env
 Scripts
+Lib
 Include
 pyvenv.cfg
-semgrep-results.json
-*pyc
+*.pyc
+gitleaks-report.json
+.devinignore

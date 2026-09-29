@@ -15,6 +15,13 @@ import os
 import re
 import sys
 import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Force UTF-8 for stdout and child processes on Windows to avoid
 # UnicodeEncodeError when tools emit invisible Unicode characters.
@@ -29,6 +36,50 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 # Enable Python UTF-8 mode for child processes (fix default open() encoding on Windows)
 os.environ.setdefault("PYTHONUTF8", "1")
 
+# Store security issues found during scan
+SECURITY_ISSUES = []
+
+def add_security_issue(tool, issue_type, details):
+    """Add a security issue to the list for email notification"""
+    SECURITY_ISSUES.append({
+        "tool": tool,
+        "type": issue_type,
+        "details": details
+    })
+
+def send_email_notification(repo_path):
+    """Send email notification if security issues were found"""
+    if not EMAIL_CONFIG["enabled"] or not SECURITY_ISSUES:
+        return
+    
+    try:
+        # Create email message
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_CONFIG["from_email"]
+        msg['To'] = EMAIL_CONFIG["to_email"]
+        msg['Subject'] = f'{EMAIL_CONFIG["subject_prefix"]} Issues found in {os.path.basename(repo_path)}'
+        
+        # Build email body
+        body = f"Security scan completed for: {repo_path}\n\n"
+        body += f"⚠️ {len(SECURITY_ISSUES)} security issue(s) found:\n\n"
+        
+        for i, issue in enumerate(SECURITY_ISSUES, 1):
+            body += f"{i}. {issue['tool']} - {issue['type']}\n"
+            body += f"   {issue['details']}\n\n"
+        
+        body += "Please review and address these issues.\n"
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Send email
+        with smtplib.SMTP_SSL(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
+            server.login(EMAIL_CONFIG["smtp_username"], EMAIL_CONFIG["smtp_password"])
+            server.send_message(msg)
+        
+        print(f"📧 Email notification sent to {EMAIL_CONFIG['to_email']}")
+    except Exception as e:
+        print(f"⚠️ Failed to send email notification: {e}")
+
 # Configuration: Enable/disable security tools
 CONFIG = {
     "npm_lock_policy": True,       # Check npm lock policy (exact versions only)
@@ -37,6 +88,18 @@ CONFIG = {
     "pip_audit": True,             # Python dependency audit with pip-audit
     "npm_audit": True,             # Node dependency audit with npm audit
     "trivy": True,                 # Filesystem vulnerability scan with trivy
+}
+
+# Email configuration
+EMAIL_CONFIG = {
+    "enabled": True,               # Enable email notifications
+    "smtp_server": os.getenv("SMTP_SERVER"),  # SMTP server
+    "smtp_port": int(os.getenv("SMTP_PORT")),              # SMTP port
+    "smtp_username": os.getenv("SMTP_USERNAME"),  # SMTP username
+    "smtp_password": os.getenv("SMTP_PASSWORD"),     # SMTP password (use app password for Gmail)
+    "from_email": os.getenv("FROM_EMAIL"),     # From email
+    "to_email": os.getenv("TO_EMAIL"),      # To email
+    "subject_prefix": "[Security Scan Alert]",  # Email subject prefix
 }
 
 
@@ -264,10 +327,14 @@ def check_npm_lock_policy():
         print("⚠️ package.json: non-exact or range version:")
         for where, ver in violations_pkg:
             print(f"   - {where}: {ver}")
+        add_security_issue("npm-lock-policy", "Unpinned dependencies", 
+                          f"Found {len(violations_pkg)} unpinned versions in package.json")
     if violations_lock:
         print("⚠️ package-lock.json: non-exact or range version:")
         for where, ver in violations_lock:
             print(f"   - {where}: {ver}")
+        add_security_issue("npm-lock-policy", "Unpinned dependencies", 
+                          f"Found {len(violations_lock)} unpinned versions in package-lock.json")
 
 
 def main():
@@ -294,7 +361,7 @@ def main():
     if CONFIG["gitleaks"]:
         if command_exists("gitleaks"):
             result = run_command(
-                "gitleaks detect --no-banner --report-format json --report-path gitleaks-report.json",
+                "gitleaks git -v --no-banner --report-format json --report-path gitleaks-report.json",
                 "Scanning for secrets"
             )
             # Show leak details if any were found
@@ -306,6 +373,7 @@ def main():
                         leaks = data if isinstance(data, list) else data.get("leaks", [])
                         if leaks:
                             print(f"\n🚨 {len(leaks)} leak(s) found:")
+                            leak_details = []
                             for leak in leaks:
                                 commit = leak.get("commit", "unknown")
                                 file = leak.get("file", "unknown")
@@ -315,6 +383,9 @@ def main():
                                 print(f"     File: {file}:{line}")
                                 print(f"     Rule: {rule}")
                                 print()
+                                leak_details.append(f"{file}:{line} ({rule})")
+                            add_security_issue("gitleaks", "Secrets leaked", 
+                                              f"Found {len(leaks)} potential secrets: {', '.join(leak_details[:3])}")
                     except Exception as e:
                         print(f"⚠️ Could not read gitleaks report: {e}")
                     # Clean up report file
@@ -377,11 +448,20 @@ def main():
     if CONFIG["pip_audit"]:
         if os.path.exists("requirements.txt"):
             if command_exists("pip-audit"):
-                run_command(
+                result1 = run_command(
                     "pip-audit -r requirements.txt",
                     "Auditing Python dependencies from requirements.txt",
                 )
-                run_command("pip-audit", "Auditing Python dependencies")
+                result2 = run_command("pip-audit", "Auditing Python dependencies")
+                # Check if pip-audit found vulnerabilities
+                if result1 and result1.returncode != 0:
+                    add_security_issue("pip-audit", "Python vulnerabilities", 
+                                      "Vulnerabilities found in Python dependencies")
+                    print("💡 Tip: Use 'pipdeptree' to identify which main dependency is causing the vulnerability")
+                if result2 and result2.returncode != 0:
+                    add_security_issue("pip-audit", "Python vulnerabilities", 
+                                      "Vulnerabilities found in Python environment")
+                    print("💡 Tip: Use 'pipdeptree' to identify which main dependency is causing the vulnerability")
             else:
                 print("⚠️ pip-audit not installed")
 
@@ -389,18 +469,29 @@ def main():
     if CONFIG["npm_audit"]:
         if os.path.exists("package.json"):
             if command_exists("npm"):
-                run_command("npm audit", "Auditing npm dependencies")
+                result = run_command("npm audit", "Auditing npm dependencies")
+                # Check if npm audit found vulnerabilities
+                if result and result.returncode != 0:
+                    add_security_issue("npm-audit", "Node vulnerabilities", 
+                                      "Vulnerabilities found in npm dependencies")
             else:
                 print("⚠️ npm not installed")
 
     # 5. Trivy
     if CONFIG["trivy"]:
         if command_exists("trivy"):
-            run_command("trivy fs .", "Running Trivy filesystem scan")
+            result = run_command("trivy fs .", "Running Trivy filesystem scan")
+            # Check if trivy found vulnerabilities
+            if result and result.returncode != 0:
+                add_security_issue("trivy", "Filesystem vulnerabilities", 
+                                  "Vulnerabilities found in filesystem scan")
         else:
             print("⚠️ trivy not installed")
 
     print("\n✅ Scan completed")
+
+    # Send email notification if issues were found
+    send_email_notification(repo_path)
 
     # 6. Recommendations
     print("npm recomendations:")

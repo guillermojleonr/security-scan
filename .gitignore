@@ -7,3 +7,6 @@ pyvenv.cfg
 *.pyc
 gitleaks-report.json
 .devinignore
+
+# Claude Code
+.claude/
